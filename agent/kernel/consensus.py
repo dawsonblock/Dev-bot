@@ -9,20 +9,17 @@ This is a local simulation — networked transport is pluggable.
 """
 
 import time
-import hashlib
-import json
-import random
 
 
 class LogEntry:
     """Single replicated log entry."""
 
-    def __init__(self, term, tick, action, proposer):
+    def __init__(self, term, tick, action, proposer, committed=False):
         self.term = term
         self.tick = tick
         self.action = action
         self.proposer = proposer
-        self.committed = False
+        self.committed = committed
 
     def to_dict(self):
         return {
@@ -47,10 +44,11 @@ class ConsensusEngine:
     commits are immediate. In multi-node mode, majority is required.
     """
 
-    def __init__(self, node_id, peers=None, election_timeout_ms=1500):
+    def __init__(self, node_id, peers=None, election_timeout_ms=1500, rpc_client=None):
         self.node_id = node_id
-        self.peers = peers or []
+        self.peers = peers or {}  # dict mapping peer_id -> peer_addr
         self.state = ConsensusState.LEADER if not peers else ConsensusState.FOLLOWER
+        self.rpc_client = rpc_client
 
         # Persistent state
         self.current_term = 0
@@ -61,7 +59,9 @@ class ConsensusEngine:
         self.commit_index = -1
         self.last_applied = -1
         self.last_heartbeat = time.time()
-        self.election_timeout = election_timeout_ms / 1000.0
+        import random
+
+        self.election_timeout = (election_timeout_ms + random.randint(0, 1500)) / 1000.0
 
         # Leader state
         self.next_index = {}  # peer -> next log index to send
@@ -109,13 +109,32 @@ class ConsensusEngine:
             self.last_applied = index
             return True, entry
 
-        # Multi-node: wait for replication (simulated)
-        # In production, this would be async with RPC
+        # Multi-node: replication
         acks = 1  # self
-        for peer in self.peers:
-            # Simulate successful replication
-            acks += 1
-            self.match_index[peer] = index
+        for peer_id, peer_addr in getattr(
+            self.peers, "items", lambda: [(p, p) for p in self.peers]
+        )():
+            if self.rpc_client:
+                # Real RPC implementation
+                prev_index = len(self.log) - 2
+                prev_term = self.log[prev_index].term if prev_index >= 0 else 0
+                payload = {
+                    "leader_id": self.node_id,
+                    "term": self.current_term,
+                    "prev_log_index": prev_index,
+                    "prev_log_term": prev_term,
+                    "entries": [entry.to_dict()],
+                    "leader_commit": self.commit_index,
+                }
+                res = self.rpc_client(peer_addr, "/append_entries", payload)
+                if res and res.get("success"):
+                    acks += 1
+                    self.match_index[peer_id] = index
+            else:
+                # Local Simulation Fallback
+                acks += 1
+                self.match_index[peer_id] = index
+
             if acks >= self.majority:
                 break
 
@@ -155,6 +174,41 @@ class ConsensusEngine:
 
         return self.current_term, False
 
+    def append_entries(
+        self, leader_id, term, prev_log_index, prev_log_term, entries, leader_commit
+    ):
+        """Handle AppendEntries RPC from leader."""
+        if term < self.current_term:
+            return self.current_term, False
+
+        self.current_term = term
+        self.state = ConsensusState.FOLLOWER
+        self.voted_for = None
+        self.last_heartbeat = time.time()
+
+        # Log consistency check
+        if prev_log_index >= 0:
+            if len(self.log) <= prev_log_index:
+                return self.current_term, False
+            if self.log[prev_log_index].term != prev_log_term:
+                return self.current_term, False
+
+        # Append new entries
+        append_idx = prev_log_index + 1
+        for i, entry_dict in enumerate(entries):
+            idx = append_idx + i
+            if idx < len(self.log):
+                if self.log[idx].term != entry_dict["term"]:
+                    self.log = self.log[:idx]
+                    self.log.append(LogEntry(**entry_dict))
+            else:
+                self.log.append(LogEntry(**entry_dict))
+
+        if leader_commit > self.commit_index:
+            self.commit_index = min(leader_commit, len(self.log) - 1)
+
+        return self.current_term, True
+
     def start_election(self):
         """Transition to candidate and request votes."""
         self.state = ConsensusState.CANDIDATE
@@ -165,9 +219,23 @@ class ConsensusEngine:
         last_index = len(self.log) - 1
         last_term = self.log[-1].term if self.log else 0
 
-        # In production, send RequestVote RPCs to peers
-        # Simulated: assume majority votes granted
-        votes += len(self.peers) // 2
+        # RPC to peers
+        for peer_id, peer_addr in getattr(
+            self.peers, "items", lambda: [(p, p) for p in self.peers]
+        )():
+            if self.rpc_client:
+                payload = {
+                    "candidate_id": self.node_id,
+                    "term": self.current_term,
+                    "last_log_index": last_index,
+                    "last_log_term": last_term,
+                }
+                res = self.rpc_client(peer_addr, "/request_vote", payload)
+                if res and res.get("vote_granted"):
+                    votes += 1
+            else:
+                # Simulated: assume majority votes granted
+                votes += 1
 
         if votes >= self.majority:
             self.state = ConsensusState.LEADER
@@ -182,7 +250,25 @@ class ConsensusEngine:
 
         if self.is_leader:
             self.last_heartbeat = now
-            # In production: send AppendEntries RPCs
+            if self.rpc_client:
+                for peer_id, peer_addr in getattr(
+                    self.peers, "items", lambda: [(p, p) for p in self.peers]
+                )():
+                    prev_index = len(self.log) - 1
+                    prev_term = self.log[prev_index].term if prev_index >= 0 else 0
+                    payload = {
+                        "leader_id": self.node_id,
+                        "term": self.current_term,
+                        "prev_log_index": prev_index,
+                        "prev_log_term": prev_term,
+                        "entries": [],
+                        "leader_commit": self.commit_index,
+                    }
+                    res = self.rpc_client(peer_addr, "/append_entries", payload)
+                    if res and res.get("term", 0) > self.current_term:
+                        self.current_term = res["term"]
+                        self.state = ConsensusState.FOLLOWER
+                        self.voted_for = None
             return "heartbeat_sent"
 
         if now - self.last_heartbeat > self.election_timeout:

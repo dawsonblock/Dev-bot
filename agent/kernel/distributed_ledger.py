@@ -34,6 +34,11 @@ class DistributedLedger:
             self.local.append(record)
         return committed, entry
 
+    def append(self, record):
+        """Alias for standard Executor pipeline."""
+        tick = record.get("tick", 0)
+        return self.propose_and_append(record, tick)
+
     def append_unchecked(self, record):
         """Append without consensus (for genesis, snapshots, etc.)."""
         self.local.append(record)

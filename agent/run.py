@@ -57,7 +57,14 @@ policy_cfg = yaml.safe_load((CONFIG_DIR / "policy.yaml").read_text())
 budgets_cfg = yaml.safe_load((CONFIG_DIR / "budgets.yaml").read_text())
 
 
-def build_agent(llm_mode="stub"):
+def build_agent(
+    llm_mode="stub",
+    ledger_path="ledger.jsonl",
+    snapshot_dir="snapshots",
+    archive_dir="archive",
+    vector_dir="vectors",
+    _ledger_obj=None,
+):
     """Construct the full hardened agent."""
 
     # ── 0. Determinism ────────────────────────────────
@@ -84,7 +91,7 @@ def build_agent(llm_mode="stub"):
 
     # ── 3. Kernel ─────────────────────────────────────
     gate = Gate(policy_cfg)
-    ledger = Ledger("ledger.jsonl")
+    ledger = _ledger_obj if _ledger_obj else Ledger(ledger_path)
     rollback = Rollback(max_depth=budgets_cfg.get("rollback_window", 10))
     invariants = default_invariants()
     escalation = Escalation(
