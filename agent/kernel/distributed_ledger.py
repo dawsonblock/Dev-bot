@@ -7,7 +7,6 @@ Extends base Ledger with:
 """
 
 from .ledger import Ledger
-from .consensus import ConsensusEngine
 
 
 class DistributedLedger:

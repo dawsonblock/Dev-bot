@@ -1,7 +1,9 @@
-"""Dry replay engine — reconstruct state evolution from ledger without executing tools."""
+"""Dry replay engine — rebuild state evolution from ledger.
+
+Does not execute tools, only tracks state hash transitions.
+"""
 
 import json
-from .statehash import state_hash
 
 
 class ReplayEngine:

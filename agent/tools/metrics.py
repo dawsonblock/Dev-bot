@@ -14,7 +14,10 @@ def read():
         res_lat = requests.get(
             f"{PROMETHEUS_URL}/api/v1/query",
             params={
-                "query": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[1m]))"
+                "query": (
+                    "histogram_quantile(0.99,"
+                    " rate(http_request_duration_seconds_bucket[1m]))"
+                )
             },
         )
 

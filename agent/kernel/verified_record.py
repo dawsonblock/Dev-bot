@@ -78,7 +78,8 @@ def verify_record_signature(record, key=None):
 
     # Reconstruct the signed payload (without the signature or wrapper fields)
     rec_copy = {k: v for k, v in record.items() if k != "signature"}
-    # Strip fields injected dynamically by outer layers (executor tracking, consensus, ledger ts)
+    # Strip fields injected dynamically by outer layers
+    # (executor tracking, consensus, ledger ts)
     for field in ["context", "latency_ms", "_consensus", "ts"]:
         rec_copy.pop(field, None)
 

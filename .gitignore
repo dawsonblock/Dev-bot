@@ -1,6 +1,35 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Ledger artifacts (generated at runtime)
 ledger.jsonl
+ledger_*.jsonl
 metrics.jsonl
+
+# Snapshots and archives (generated at runtime)
 agent/archive/
+agent/snapshots/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (UI)
+node_modules/
+ui/dist/
+
+# Environment
+.env
+*.env.local

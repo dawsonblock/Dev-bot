@@ -32,7 +32,9 @@ class LLM:
                 "type": "function",
                 "function": {
                     "name": "propose_action",
-                    "description": "Root-cause the anomaly and propose a safe remediation.",
+                    "description": (
+                        "Root-cause the anomaly and" " propose a safe remediation."
+                    ),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -57,11 +59,17 @@ class LLM:
                             },
                             "args": {
                                 "type": "object",
-                                "description": "Arguments strictly required for the selected tool",
+                                "description": (
+                                    "Arguments strictly required"
+                                    " for the selected tool"
+                                ),
                             },
                             "reasoning": {
                                 "type": "string",
-                                "description": "Root-cause analysis and why this tool was chosen",
+                                "description": (
+                                    "Root-cause analysis and"
+                                    " why this tool was chosen"
+                                ),
                             },
                         },
                         "required": ["tool", "risk", "args", "reasoning"],
@@ -104,9 +112,15 @@ class LLM:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a deterministic, bounded DevOps autonomous agent. "
-                            "You strictly output JSON calling the `propose_action` function. "
-                            "Do not apologize, explain, or output markdown outside the function structure.",
+                            "content": (
+                                "You are a deterministic, bounded"
+                                " DevOps autonomous agent. "
+                                "You strictly output JSON calling"
+                                " the `propose_action` function. "
+                                "Do not apologize, explain, or "
+                                "output markdown outside the"
+                                " function structure."
+                            ),
                         },
                         {"role": "user", "content": clean_prompt},
                     ],

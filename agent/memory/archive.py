@@ -1,4 +1,7 @@
-import json, gzip, time, os
+import json
+import gzip
+import time
+import os
 
 class Archive:
     def __init__(self, path):

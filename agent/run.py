@@ -354,9 +354,7 @@ def make_step(agent):
                 inv_hash = state_hash(state)
                 anchor = snapshots.capture(state, ledger_height, inv_hash, tick)
                 ledger.append(anchor)
-                print(
-                    f"[SNAPSHOT] Anchored at tick={tick} h={anchor['snapshot_hash'][:12]}"
-                )
+                print(f"[SNAPSHOT] tick={tick}" f" h={anchor['snapshot_hash'][:12]}")
 
             # ── Stable adaptation ─────────────────────
             adaptation.reset_window()

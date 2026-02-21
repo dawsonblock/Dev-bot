@@ -4,7 +4,6 @@ Generates boundary test cases from invariant rules and reports which
 invariants are provably satisfiable or violated under edge conditions.
 """
 
-import copy
 from .invariants import default_invariants, InvariantViolation
 
 

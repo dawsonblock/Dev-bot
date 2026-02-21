@@ -11,7 +11,6 @@ Backends:
 import hashlib
 import hmac
 import os
-import time
 
 
 class HSMError(Exception):

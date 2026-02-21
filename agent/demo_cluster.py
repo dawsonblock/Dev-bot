@@ -12,7 +12,6 @@ import os
 import sys
 import time
 import random
-import signal
 import multiprocessing
 
 # Ensure the agent package is importable
