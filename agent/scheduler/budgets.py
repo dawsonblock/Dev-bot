@@ -1,7 +1,5 @@
 """Tick-based token + call budget with per-action resource ceilings."""
 
-from .clocks import Clocks
-
 
 class Budgets:
     def __init__(self, token_per_min, tool_calls_per_min, refill_ticks=120):

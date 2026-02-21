@@ -7,14 +7,13 @@ Every decision is forensically logged to the hash-chained ledger.
 
 import argparse
 import sys
-import os
 from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 # ── Kernel imports ────────────────────────────────────
-from kernel.determinism import init_determinism, get_tick, config_hash
+from kernel.determinism import init_determinism, config_hash
 from kernel.event_loop import EventLoop
 from kernel.gate import Gate
 from kernel.ledger import Ledger
@@ -26,6 +25,10 @@ from kernel.integrity import full_integrity_hash
 from kernel.invariants import default_invariants
 from kernel.escalation import Escalation
 from kernel.predictive import FailurePredictor
+from kernel.evolution_bounds import EvolutionBounds
+from kernel.snapshots import SnapshotManager
+from kernel.adaptation import AdaptationEngine
+from kernel.statehash import state_hash
 
 # ── Subsystem imports ─────────────────────────────────
 from sparse.anomaly import EWMA, anomalous
@@ -101,7 +104,7 @@ def build_agent(llm_mode="stub"):
         restored = rollback.restore()
         if restored:
             state.update(restored)
-            print(f"[WATCHDOG] restored state")
+            print("[WATCHDOG] restored state")
         telemetry.emit("rollback", {"reason": reason})
 
     wd = Watchdog(timeout_s=10.0, on_trip=on_watchdog_trip)
@@ -172,6 +175,14 @@ def build_agent(llm_mode="stub"):
         "predictor": predictor,
         "telemetry": telemetry,
         "invariants": invariants,
+        "evolution_bounds": EvolutionBounds(
+            max_episodes_per_window=200,
+            max_vectors_per_window=500,
+            max_habits=50,
+            window_ticks=1000,
+        ),
+        "snapshots": SnapshotManager(snapshot_dir="snapshots", interval_ticks=500),
+        "adaptation": AdaptationEngine(),
     }
     return agent
 
@@ -186,13 +197,15 @@ def make_step(agent):
     planner = agent["planner"]
     patcher = agent["patcher"]
     memory = agent["memory"]
-    bud = agent["bud"]
     clocks = agent["clocks"]
     state = agent["state"]
     executor = agent["executor"]
     escalation = agent["escalation"]
     predictor = agent["predictor"]
     telemetry = agent["telemetry"]
+    bounds = agent["evolution_bounds"]
+    snapshots = agent["snapshots"]
+    adaptation = agent["adaptation"]
 
     def step(tick):
         wd.kick(tick)
@@ -316,6 +329,30 @@ def make_step(agent):
                     telemetry.emit("rollback", {"tool": act.get("tool")})
 
                 state["incident_count"] += 1
+
+            # ── Evolution bounds check ────────────────
+            bounds.record("tool_calls", 1, tick=tick)
+            ok, violations = bounds.check_state(state, tick=tick)
+            if not ok:
+                telemetry.emit("evolution_violation", {"violations": violations})
+
+            ok, violation = bounds.check_habits(habits.table, tick=tick)
+            if not ok:
+                adaptation.adapt_habits(habits, tick=tick)
+                telemetry.emit("habits_pruned", violation)
+
+            # ── Periodic snapshots ────────────────────
+            if snapshots.due(tick):
+                _, ledger_height = Ledger.verify("ledger.jsonl")
+                inv_hash = state_hash(state)
+                anchor = snapshots.capture(state, ledger_height, inv_hash, tick)
+                ledger.append(anchor)
+                print(
+                    f"[SNAPSHOT] Anchored at tick={tick} h={anchor['snapshot_hash'][:12]}"
+                )
+
+            # ── Stable adaptation ─────────────────────
+            adaptation.reset_window()
 
         wd.check(tick)
 

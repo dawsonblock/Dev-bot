@@ -6,10 +6,10 @@ Enforces: gate → budget → transaction → tool → ledger.
 """
 
 import time
-from .gate import Gate
 from .txn import Transaction
 from .statehash import state_hash
 from .determinism import get_tick
+from .verified_record import build_verified_record
 
 
 class Executor:
@@ -169,27 +169,32 @@ class Executor:
         after = state_hash(state)
         latency = time.time() - t0
 
-        # ── 9. Forensic ledger entry ──────────────────
-        self.ledger.append(
-            {
-                "event": "exec",
-                "tick": tick,
-                "action": action,
-                "context": context[:200],
-                "result": {
-                    "ok": success,
-                    "rc": result.get("rc"),
-                    "stdout": result.get("stdout", "")[:200],
-                    "stderr": result.get("stderr", "")[:200],
-                },
-                "state_before": before,
-                "state_after": after,
-                "gate_rule": rule_id,
-                "latency_ms": round(latency * 1000, 1),
-            }
-        )
+        # ── 9. Build verified record ──────────────────
+        invariant_ok = True
+        if not success:
+            invariant_ok = False
 
-        # ── 10. Telemetry ─────────────────────────────
+        verified = build_verified_record(
+            tick=tick,
+            action=action,
+            state_before=before,
+            state_after=after,
+            invariant_ok=invariant_ok,
+            gate_rule=rule_id,
+            result_summary={
+                "ok": success,
+                "rc": result.get("rc"),
+                "stdout": result.get("stdout", "")[:200],
+                "stderr": result.get("stderr", "")[:200],
+            },
+        )
+        verified["context"] = context[:200]
+        verified["latency_ms"] = round(latency * 1000, 1)
+
+        # ── 10. Forensic ledger entry (verified) ──────
+        self.ledger.append(verified)
+
+        # ── 11. Telemetry ─────────────────────────────
         if self.telemetry:
             self.telemetry.emit(
                 "exec",
