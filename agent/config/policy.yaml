@@ -1,5 +1,66 @@
-restart_service: {max_risk: 2, requires_approval: false}
-run_healthcheck: {max_risk: 0, requires_approval: false}
-shell: {max_risk: 1, requires_approval: true}
-git: {max_risk: 2, requires_approval: true}
-noop: {max_risk: 0, requires_approval: false}
+tools:
+  restart_service:
+    allowed: true
+    max_risk: 2
+    reversibility: reversible
+    requires_approval: false
+    max_rate: 5
+    args:
+      service:
+        required: true
+        regex: "^[a-zA-Z0-9_.-]+$"
+      name:
+        required: false
+        regex: "^[a-zA-Z0-9_.-]+$"
+
+  run_healthcheck:
+    allowed: true
+    max_risk: 0
+    reversibility: reversible
+    requires_approval: false
+    max_rate: 20
+    args:
+      url:
+        required: false
+        regex: "^https?://[a-zA-Z0-9._:/-]+$"
+
+  get_logs:
+    allowed: true
+    max_risk: 0
+    reversibility: reversible
+    requires_approval: false
+    max_rate: 10
+    args:
+      service:
+        required: true
+        regex: "^[a-zA-Z0-9_.-]+$"
+      lines:
+        required: false
+
+  run_ci:
+    allowed: true
+    max_risk: 1
+    reversibility: reversible
+    requires_approval: false
+    max_rate: 5
+    args:
+      cmd:
+        required: false
+        regex: "^(python tests/|pytest|make test)"
+
+  noop:
+    allowed: true
+    max_risk: 0
+    reversibility: reversible
+    requires_approval: false
+
+  # Freeform shell explicitly blocked
+  shell:
+    allowed: false
+
+  git:
+    allowed: true
+    max_risk: 2
+    reversibility: compensatable
+    requires_approval: true
+    max_rate: 3

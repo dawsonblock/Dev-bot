@@ -1,0 +1,65 @@
+name: Agent CI
+
+on: [push, pull_request]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.9"
+
+            - name: Install dependencies
+              run: pip install -r requirements.txt
+
+            - name: Policy schema validation
+              run: |
+                  cd agent
+                  python -c "
+                  import yaml
+                  from kernel.policy_schema import validate_policy, validate_budgets
+                  policy = yaml.safe_load(open('config/policy.yaml').read())
+                  budgets = yaml.safe_load(open('config/budgets.yaml').read())
+                  validate_policy(policy)
+                  validate_budgets(budgets)
+                  print('Policy validation: PASS')
+                  "
+
+            - name: Ledger verification
+              run: |
+                  cd agent
+                  python -c "
+                  from kernel.ledger import Ledger
+                  ok, n = Ledger.verify('ledger.jsonl')
+                  print(f'Ledger: {\"PASS\" if ok else \"FAIL\"} ({n} records)')
+                  assert ok or n == 0
+                  "
+
+            - name: Replay tests
+              run: |
+                  cd agent
+                  python tests/replay_tests.py
+
+            - name: Import smoke test
+              run: |
+                  cd agent
+                  python -c "
+                  from kernel.determinism import init_determinism
+                  from kernel.execute import Executor
+                  from kernel.gate import Gate
+                  from kernel.txn import Transaction
+                  from kernel.invariants import default_invariants
+                  from kernel.escalation import Escalation
+                  from kernel.predictive import FailurePredictor
+                  from kernel.replay import ReplayEngine
+                  from kernel.capabilities import CapabilityGraph
+                  from kernel.execution_graph import ExecutionGraph
+                  from memory.router import MemoryRouter
+                  from tools.system_ops import TOOL_REGISTRY
+                  from tools.telemetry import Telemetry
+                  print('All modules import: PASS')
+                  "

@@ -1,16 +1,33 @@
+"""Dev-bot: Deterministic Autonomous DevOps Agent — Hardened Runner.
+
+All tool execution flows through kernel/execute.py (non-bypassable).
+State transitions are tick-driven and transactional.
+Every decision is forensically logged to the hash-chained ledger.
+"""
+
 import argparse
 import sys
+import os
 from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# ── Kernel imports ────────────────────────────────────
+from kernel.determinism import init_determinism, get_tick, config_hash
 from kernel.event_loop import EventLoop
 from kernel.gate import Gate
 from kernel.ledger import Ledger
 from kernel.watchdog import Watchdog
 from kernel.rollback import Rollback
+from kernel.execute import Executor
+from kernel.policy_schema import validate_policy, validate_budgets
+from kernel.integrity import full_integrity_hash
+from kernel.invariants import default_invariants
+from kernel.escalation import Escalation
+from kernel.predictive import FailurePredictor
 
+# ── Subsystem imports ─────────────────────────────────
 from sparse.anomaly import EWMA, anomalous
 from sparse.habits import Habits
 
@@ -22,235 +39,293 @@ from memory.hot_cache import HotCache
 from memory.vector_store import VectorStore
 from memory.episodic_ledger import Episodic
 from memory.archive import Archive
+from memory.router import MemoryRouter
 
 from tools.metrics import read as read_metrics
-from tools.ci import run_tests as run_tests_stub
-from tools.shell import run as run_shell
+from tools.system_ops import TOOL_REGISTRY
+from tools.telemetry import Telemetry
 
 from scheduler.clocks import Clocks
 from scheduler.budgets import Budgets
 
+# ── Config ────────────────────────────────────────────
 CONFIG_DIR = Path(__file__).parent / "config"
 policy_cfg = yaml.safe_load((CONFIG_DIR / "policy.yaml").read_text())
 budgets_cfg = yaml.safe_load((CONFIG_DIR / "budgets.yaml").read_text())
 
 
 def build_agent(llm_mode="stub"):
-    state = {"ok": True, "incident_count": 0, "last_action": None}
-    agent = {}
+    """Construct the full hardened agent."""
+
+    # ── 0. Determinism ────────────────────────────────
+    seed = budgets_cfg.get("seed", 1337)
+    init_determinism(seed)
+
+    # ── 1. Validate configs ───────────────────────────
+    validate_policy(policy_cfg)
+    validate_budgets(budgets_cfg)
+
+    cfg_hash = config_hash(policy_cfg, budgets_cfg)
+    code_hash = full_integrity_hash(
+        str(Path(__file__).parent),
+        str(CONFIG_DIR),
+    )
+
+    # ── 2. State ──────────────────────────────────────
+    state = {
+        "ok": True,
+        "mode": "normal",
+        "incident_count": 0,
+        "last_action": None,
+    }
+
+    # ── 3. Kernel ─────────────────────────────────────
+    gate = Gate(policy_cfg)
+    ledger = Ledger("ledger.jsonl")
+    rollback = Rollback(max_depth=budgets_cfg.get("rollback_window", 10))
+    invariants = default_invariants()
+    escalation = Escalation(
+        policy_threshold=budgets_cfg.get("policy_violation_threshold", 3),
+        invariant_threshold=budgets_cfg.get("invariant_violation_threshold", 1),
+        tool_failure_threshold=budgets_cfg.get("tool_failure_threshold", 5),
+        ci_failure_threshold=budgets_cfg.get("ci_failure_threshold", 3),
+    )
+    predictor = FailurePredictor(
+        window=budgets_cfg.get("risk_window", 100),
+        risk_threshold=budgets_cfg.get("risk_threshold", 0.7),
+    )
+    telemetry = Telemetry("metrics.jsonl")
 
     def on_watchdog_trip(reason):
         print(f"\n[WATCHDOG TRIP] reason={reason} triggering rollback")
-        if state:
-            restored = agent["rollback"].restore()
-            if restored:
-                agent["state"].update(restored)
-                print(f"[WATCHDOG] restored state: {state}")
+        restored = rollback.restore()
+        if restored:
+            state.update(restored)
+            print(f"[WATCHDOG] restored state")
+        telemetry.emit("rollback", {"reason": reason})
 
-    rollback = Rollback(max_depth=budgets_cfg.get("rollback_window", 10))
     wd = Watchdog(timeout_s=10.0, on_trip=on_watchdog_trip)
-    gate = Gate(policy_cfg)
-    ledger = Ledger("ledger.jsonl")
 
+    # ── 4. Sparse ─────────────────────────────────────
     ewma = EWMA(alpha=0.1)
-    habits = Habits()
+    habits = Habits(
+        min_trials=budgets_cfg.get("habit_min_trials", 5),
+        min_confidence=budgets_cfg.get("habit_min_confidence", 0.6),
+        decay_hours=budgets_cfg.get("habit_decay_hours", 24),
+    )
 
+    # ── 5. Dense ──────────────────────────────────────
     llm = LLM(mode=llm_mode)
     planner = Planner(llm, token_budget=256)
     patcher = Patcher()
 
+    # ── 6. Memory ─────────────────────────────────────
     hot = HotCache(k=64)
     vs = VectorStore()
     epi = Episodic()
     arc = Archive("archive")
+    memory = MemoryRouter(hot, vs, epi)
 
+    # ── 7. Scheduler ──────────────────────────────────
+    tick_s = budgets_cfg.get("tick_s", 0.5)
     bud = Budgets(
         token_per_min=budgets_cfg.get("token_per_min", 8000),
         tool_calls_per_min=budgets_cfg.get("tool_calls_per_min", 30),
     )
-
     clocks = Clocks(
         fast_s=budgets_cfg.get("tick_s", 0.5),
         medium_s=budgets_cfg.get("anomaly_interval_s", 5.0),
         slow_s=budgets_cfg.get("plan_interval_s", 15.0),
+        tick_s=tick_s,
     )
 
-    agent.update(
-        {
-            "rollback": rollback,
-            "wd": wd,
-            "gate": gate,
-            "ledger": ledger,
-            "ewma": ewma,
-            "habits": habits,
-            "planner": planner,
-            "patcher": patcher,
-            "epi": epi,
-            "arc": arc,
-            "hot": hot,
-            "vs": vs,
-            "bud": bud,
-            "clocks": clocks,
-            "state": state,
-        }
+    # ── 8. Central Executor (NON-BYPASSABLE) ──────────
+    executor = Executor(
+        gate=gate,
+        budgets=bud,
+        tool_registry=TOOL_REGISTRY,
+        ledger=ledger,
+        memory_router=memory,
+        invariants=invariants,
+        telemetry=telemetry,
     )
+
+    # ── 9. Genesis record ─────────────────────────────
+    ledger.write_genesis(seed, cfg_hash, code_hash)
+
+    agent = {
+        "state": state,
+        "gate": gate,
+        "ledger": ledger,
+        "rollback": rollback,
+        "wd": wd,
+        "ewma": ewma,
+        "habits": habits,
+        "planner": planner,
+        "patcher": patcher,
+        "memory": memory,
+        "arc": arc,
+        "bud": bud,
+        "clocks": clocks,
+        "executor": executor,
+        "escalation": escalation,
+        "predictor": predictor,
+        "telemetry": telemetry,
+        "invariants": invariants,
+    }
     return agent
 
 
 def make_step(agent):
+    """Build the main tick step function using all hardened modules."""
     rollback = agent["rollback"]
     wd = agent["wd"]
-    gate = agent["gate"]
     ledger = agent["ledger"]
     ewma = agent["ewma"]
     habits = agent["habits"]
     planner = agent["planner"]
     patcher = agent["patcher"]
-    hot = agent["hot"]
-    vs = agent["vs"]
-    epi = agent["epi"]
+    memory = agent["memory"]
     bud = agent["bud"]
     clocks = agent["clocks"]
     state = agent["state"]
+    executor = agent["executor"]
+    escalation = agent["escalation"]
+    predictor = agent["predictor"]
+    telemetry = agent["telemetry"]
 
-    def step(now):
-        wd.kick(now)
+    def step(tick):
+        wd.kick(tick)
 
-        if clocks.due_fast(now):
+        # ── Check safe mode ───────────────────────────
+        if escalation.in_safe_mode():
+            state["mode"] = "safe"
+
+        if predictor.should_safe_mode():
+            state["mode"] = "safe"
+
+        # ── FAST: Metric ingest ───────────────────────
+        if clocks.due_fast(tick):
             m = read_metrics()
             mu = ewma.update(m["error_rate"])
             bad = anomalous(
-                m["error_rate"], mu, k=2.5, sigma=getattr(ewma, "sigma", 0.05)
+                m["error_rate"],
+                mu,
+                k=2.5,
+                sigma=getattr(ewma, "sigma", 0.05),
             )
 
-            ctx = f"ts={now:.1f} error_rate={m['error_rate']:.4f} mu={mu:.4f} lat={m.get('latency_p99',0):.1f} bad={bad}"
-            hot.put(ctx)
-            vs.add(ctx, metadata={"ts": now, "bad": bad})
+            ctx = (
+                f"tick={tick} error_rate={m['error_rate']:.4f} "
+                f"mu={mu:.4f} lat={m.get('latency_p99', 0):.1f} bad={bad}"
+            )
+            memory.put_hot(ctx)
+            memory.stage_vector(ctx, metadata={"tick": tick, "bad": bad})
 
             state["_last_ctx"] = ctx
             state["_last_bad"] = bad
 
-        if clocks.due_medium(now) and state.get("_last_bad"):
+            # Feed predictor
+            predictor.update(
+                {
+                    "fail": bad,
+                    "load": m["error_rate"],
+                    "latency_ms": m.get("latency_p99", 0),
+                }
+            )
+
+            if bad:
+                telemetry.emit("anomaly", {"tick": tick, "error_rate": m["error_rate"]})
+
+        # ── MEDIUM: Anomaly scoring + habit check ─────
+        if clocks.due_medium(tick) and state.get("_last_bad"):
             ctx = state.get("_last_ctx", "")
             print(f"\n[ANOMALY] {ctx}")
 
             candidates = ["restart_service", "run_healthcheck", "noop"]
             best = habits.best_action(candidates)
             if best:
-                print(
-                    f"[REFLEX] Known-good habit found: bypassing LLM to deploy {best}"
-                )
+                print(f"[REFLEX] Confidence-bounded habit: {best}")
+                telemetry.emit("habit_hit", {"tool": best})
             state["_candidate"] = best
 
-        if clocks.due_slow(now) and state.get("_last_bad") and bud.use_call():
+        # ── SLOW: Planning + gated execution ──────────
+        if clocks.due_slow(tick) and state.get("_last_bad"):
             ctx = state.get("_last_ctx", "")
-            history = epi.to_strings(5)
+            history = memory.episode_strings(5)
 
-            candidate = state.get("_candidate")
-            if candidate:
-                plan = f"Reflex execution of {candidate}"
-                act = {
-                    "tool": candidate,
-                    "risk": 0,
-                    "args": {},
-                    "reasoning": "bypassed LLM via habit reflex",
-                }
-                state["_candidate"] = None
+            # In safe mode, only allow noop
+            if state.get("mode") == "safe":
+                act = {"tool": "noop", "risk": 0, "args": {}}
+                plan = "Safe mode: noop only"
             else:
-                plan = planner.propose(ctx, history=history)
-                act = patcher.plan_to_action(plan)
-
-            ok, reason = gate.check(act)
-
-            ledger.append(
-                {
-                    "event": "action_proposal",
-                    "plan": plan,
-                    "act": act,
-                    "gate": reason,
-                }
-            )
+                candidate = state.get("_candidate")
+                if candidate:
+                    plan = f"Reflex execution of {candidate}"
+                    act = {
+                        "tool": candidate,
+                        "risk": 0,
+                        "args": {"service": "app", "name": "app"},
+                        "reasoning": "bypassed LLM via habit reflex",
+                    }
+                    state["_candidate"] = None
+                else:
+                    plan = planner.propose(ctx, history=history)
+                    act = patcher.plan_to_action(plan)
 
             print(f"[PLAN] {plan}")
+
+            # ── Snapshot for rollback ─────────────────
+            rollback.snapshot(dict(state))
+
+            # ── Central executor (gate → budget → txn → tool → ledger)
+            result = executor.execute_checked(act, state, context=ctx)
+
             print(
-                f"[GATE] ok={ok} tool={act.get('tool')} risk={act.get('risk')} reason={reason}"
+                f"[EXEC] tool={act.get('tool')} "
+                f"status={result['status']} ok={result.get('ok')}"
             )
 
-            if ok:
-                rollback.snapshot(dict(state))
+            if result["ok"]:
+                habits.record(act["tool"], True)
+                memory.stage_episode(
+                    {
+                        "ctx": ctx,
+                        "act": act,
+                        "success": True,
+                    }
+                )
+                state["last_action"] = act["tool"]
+                state["_last_bad"] = False
+            else:
+                habits.record(act["tool"], False)
 
-                test_result = run_tests_stub()
-                if not test_result.get("ok", True):
-                    print(
-                        f"[CI FAIL] rolling back. Summary: {test_result.get('summary')}"
-                    )
-                    restored = rollback.restore()
-                    if restored:
-                        state.update(restored)
-                    ledger.append({"event": "ci_fail", "act": act})
+                # Escalation
+                if result["status"] == "rejected":
+                    escalation.record("policy_violation")
+                elif result["status"] == "invariant_violation":
+                    escalation.record("invariant_violation")
                 else:
-                    success = execute(act)
-                    habits.record(act["tool"], success)
-                    epi.add({"ctx": ctx, "act": act, "success": success})
+                    escalation.record("tool_failure")
 
-                    state["last_action"] = act["tool"]
-                    state["incident_count"] += int(not success)
+                # Rollback
+                restored = rollback.restore()
+                if restored:
+                    state.update(restored)
+                    print("[ROLLBACK] state restored")
+                    telemetry.emit("rollback", {"tool": act.get("tool")})
 
-                    ledger.append(
-                        {
-                            "event": "action_executed",
-                            "act": act,
-                            "success": success,
-                        }
-                    )
-                    print(f"[EXEC] {act['tool']} success={success}")
+                state["incident_count"] += 1
 
-                    if not success:
-                        print("[EXEC FAIL] rolling back")
-                        restored = rollback.restore()
-                        if restored:
-                            state.update(restored)
-
-                    state["_last_bad"] = False
-
-        wd.check(now)
+        wd.check(tick)
 
     return step
 
 
-def execute(act):
-    tool = act.get("tool", "noop")
-    if tool == "noop":
-        return True
-
-    if tool == "restart_service":
-        svc = act.get("args", {}).get("name", "")
-        if not svc:
-            print("[EXEC FAIL] restart_service requires a 'name' argument")
-            return False
-        print(f"  -> [systemctl] restarting service: {svc}")
-        res = run_shell(f"sudo systemctl restart {svc}")
-        return res["rc"] == 0
-
-    if tool == "run_healthcheck":
-        url = act.get("args", {}).get("url", "http://localhost/")
-        print(f"  -> [curl] healthchecking: {url}")
-        res = run_shell(f"curl -s -f {url}")
-        return res["rc"] == 0
-
-    if tool == "shell":
-        cmd = act.get("args", {}).get("cmd", "")
-        if not cmd:
-            return False
-        print(f"  -> [shell] executing: {cmd}")
-        res = run_shell(cmd)
-        return res["rc"] == 0
-
-    return False
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Autonomous DevOps Agent")
+    parser = argparse.ArgumentParser(
+        description="Deterministic Autonomous DevOps Agent (Hardened)"
+    )
     parser.add_argument(
         "--llm",
         default="stub",
@@ -258,15 +333,19 @@ def main():
         help="LLM backend (default: stub)",
     )
     parser.add_argument(
-        "--tick", type=float, default=None, help="Override event loop tick (seconds)"
+        "--tick",
+        type=float,
+        default=None,
+        help="Override event loop tick (seconds)",
     )
     args = parser.parse_args()
 
     print("=" * 60)
-    print(" Deterministic Autonomous DevOps Agent")
+    print(" Deterministic Autonomous DevOps Agent [HARDENED]")
     print(f" LLM mode : {args.llm}")
     print(f" Policy   : {CONFIG_DIR / 'policy.yaml'}")
     print(" Ledger   : ledger.jsonl")
+    print(" Telemetry: metrics.jsonl")
     print("=" * 60)
 
     agent = build_agent(llm_mode=args.llm)
@@ -279,14 +358,16 @@ def main():
     except KeyboardInterrupt:
         print("\n[Agent] shutting down, archiving state...")
         Path("archive").mkdir(exist_ok=True)
-
         agent["arc"].dump(agent["state"], label="shutdown")
-        print("[Agent] Shutdown complete.")
 
         ok, n = Ledger.verify("ledger.jsonl")
         print(
-            f"[Ledger integrity check]: {'PASS' if ok else 'FAIL'} ({n} mathematically verified records)"
+            f"[Ledger integrity]: {'PASS' if ok else 'FAIL'} " f"({n} verified records)"
         )
+
+        telem = agent["telemetry"].summary()
+        print(f"[Telemetry] {telem}")
+        print("[Agent] Shutdown complete.")
 
 
 if __name__ == "__main__":

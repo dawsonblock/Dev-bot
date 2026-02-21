@@ -1,40 +1,49 @@
 # Dev-bot: Deterministic Autonomous DevOps Agent
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/dawsonblock/Dev-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/dawsonblock/Dev-bot/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Dev-bot is a bounded, auditable, and self-improving autonomous agent designed for continuous system maintenance. It fundamentally shifts the LLM away from the "steering wheel" and places it in the "passenger seat." The agent operates as a deterministic state machine equipped with cryptographic logging and transactional rollback, consulting an LLM solely as an interchangeable heuristic function during slow timescales, securely sandboxed by static configuration limits.
+A **bounded, auditable, self-improving autonomous agent** for continuous system maintenance. The LLM is in the passenger seat — the deterministic kernel drives.
 
 ---
 
 ## ⚡ Core Properties
 
-* **Non-bypassable Policy Gate:** Every action passes through `kernel/gate.py` before execution.
-* **Append-only Cryptographic Ledger:** SHA-256 hash-chained, tamper-evident action log (`ledger.jsonl`).
-* **Deterministic Replay:** The ledger can be cryptographically replayed and verified offline.
-* **Online Learning within Envelopes:** A Bayesian "Habit" table tracks tool success rates, allowing the agent to "compile" dense LLM reasoning down into fast, sparse reflexes.
-* **Automatic Rollback:** Deep-copy snapshot stack auto-restores state on failure.
-* **Multi-timescale Scheduler:** Reflexive vs. deliberate thought loops (Fast 0.5s, Medium 5s, Slow 15s).
+| Property | Implementation |
+|---|---|
+| **Non-bypassable Gate** | Every action passes through `kernel/gate.py` with argument regex, rate limits, and reversibility checks |
+| **Central Executor** | All tool dispatch flows through `kernel/execute.py` — no direct tool calls anywhere |
+| **Cryptographic Ledger** | SHA-256 hash-chained, tamper-evident, forensic-grade with full I/O capture |
+| **Transactional Rollback** | `kernel/txn.py` provides begin/commit/abort with state snapshot restore |
+| **Deterministic Replay** | Tick-driven clock, global seed, deterministic retrieval — replay reproduces decisions |
+| **Formal Invariants** | State invariants validated before every transaction commit |
+| **Confidence-bounded Learning** | Beta posterior habits with Wilson score — reflexes fire only with statistical evidence |
+| **Predictive Failure Model** | Rolling window risk scoring triggers pre-emptive safe mode |
+| **Escalation Ladder** | Failure taxonomy with deterministic mode transitions |
 
 ---
 
 ## 🏗️ Architecture
 
-The system cleanly divides logical operations into Security (Kernel), fast algorithmic reflexes (Sparse), and statistical contextual reasoning (Dense).
-
 ```mermaid
 graph TD
     subgraph Kernel [Security & Audit]
-        G[Gate] --> L[Cryptographic Ledger]
+        DET[Determinism Core] --> EL[Tick-Driven Event Loop]
+        G[Hardened Gate] --> EX[Central Executor]
+        EX --> TXN[Transaction Engine]
+        TXN --> L[Forensic Ledger]
         L --> R[Rollback Engine]
-        R --> W[Watchdog]
+        INV[Invariants] --> EX
+        ESC[Escalation] --> EX
+        PRED[Predictive Model] --> ESC
     end
 
     subgraph Memory [State & Context]
-        HC[Hot Cache FIFO]
-        VS[Vector Store]
-        EL[Episodic Ledger]
-        Arc[Archive Dump]
+        MR[Memory Router]
+        MR --> HC[Hot Cache]
+        MR --> VS[Vector Store]
+        MR --> EP[Episodic Ledger]
     end
 
     subgraph Sparse [Algorithmic Reflexes]
@@ -47,86 +56,131 @@ graph TD
         P[Token-Budgeted Planner]
         Pt[JSON Patcher]
     end
-    
+
+    subgraph Tools [Constrained Operations]
+        SO[System Ops Registry]
+        TEL[Telemetry Sink]
+    end
+
     Metrics((Metrics)) --> A
-    A -- "Anomaly Spikes" --> H
-    H -- "No Known Habit" --> P
-    P --> LLM
-    LLM --> Pt
-    Pt --> G
+    A -- "Anomaly" --> H
+    H -- "No Reflex" --> P
+    P --> LLM --> Pt --> G
+    H -- "Confident Reflex" --> G
+    EX --> SO
+    EX --> TEL
+    TXN --> MR
 ```
 
 ### Timescales
 
-1. **Fast (0.5s)**: Ingests telemetry, updates EWMA variance models, saves context to hot caches.
-2. **Medium (5s)**: If an anomaly is active, consults the Bayesian Habits table. If a known-good reflex exists (> 0.6 success rate), it bypasses the LLM entirely and executes.
-3. **Slow (15s)**: If no reflex covers the anomaly, delegates to the Token-Budgeted Planner to query the LLM (Stub, Anthropic, or local Ollama) for a contextual fix.
+| Tier | Interval | Work |
+|---|---|---|
+| **Fast** | Every tick | Metric ingest, EWMA update, hot cache write |
+| **Medium** | 10 ticks | Anomaly scoring, Bayesian habit lookup |
+| **Slow** | 30 ticks | LLM planning (or reflex bypass), gated execution |
 
 ---
 
-## 🔌 Real World Integrations
+## 🔒 Security Model
 
-Dev-bot ships with fully functional, real-world execution systems rather than stubs:
-
-* **Prometheus Metrics (`tools/metrics.py`)**: Ingests live HTTP 5xx error rates and p99 latency histograms over a 1m rolling window via PromQL.
-* **System Execution (`run.py` -> `tools/shell.py`)**: Dispatches OS-level commands (e.g., `sudo systemctl restart`, `curl -f -s`) natively matching its policy envelope.
-* **Pytest CI (`tools/ci.py`)**: Runs physical local Python subprocesses to verify system integrity before sealing an execution.
+- **No freeform shell** — `tools/shell.py` replaced with `tools/system_ops.py` (allowlisted commands only)
+- **Argument validation** — regex-enforced per tool in `policy.yaml`
+- **Rate limiting** — per-tool rate ceilings enforced by the gate
+- **Reversibility classification** — `reversible`, `compensatable`, `irreversible`
+- **Repeat-failure guard** — consecutive failures block tool re-execution
+- **Code integrity** — `kernel/integrity.py` fingerprints codebase at boot
+- **Policy validation** — `kernel/policy_schema.py` rejects malformed configs at startup
+- **Capability tokens** — `kernel/capabilities.py` provides cryptographic scoped permissions
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
-
 ```bash
-pip install pyyaml requests
-```
+# Install dependencies
+pip install -r requirements.txt
 
-### 2. Run the Agent
-
-**Run with stub LLM (no API key needed):**
-
-```bash
+# Run with stub LLM (no API key needed)
 cd agent
 python run.py
-```
 
-**Run with real Claude API:**
+# Run with real Claude API
+ANTHROPIC_API_KEY=sk-... python run.py --llm api
 
-```bash
-export ANTHROPIC_API_KEY=sk-...
-python run.py --llm anthropic
-```
-
-**Run with local Ollama:**
-
-```bash
+# Run with local Ollama
 python run.py --llm ollama
-```
 
-### 3. Verification & Testing
-
-Run all tests (in a separate shell while agent is running, or standalone):
-
-```bash
-python tests/replay_tests.py
-```
-
-Verify ledger cryptographic integrity:
-
-```bash
+# Verify ledger integrity
 python -c "from kernel.ledger import Ledger; ok,n = Ledger.verify('ledger.jsonl'); print('PASS' if ok else 'FAIL')"
+```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server for live metrics |
+| `ANTHROPIC_API_KEY` | — | Claude API key (if `--llm api`) |
+
+---
+
+## 📁 Module Map
+
+```
+agent/
+├── kernel/                    # Security & Audit Core
+│   ├── determinism.py         # Global seed, tick clock, config hash
+│   ├── event_loop.py          # Tick-driven main loop
+│   ├── gate.py                # Hardened policy gate with arg validation
+│   ├── execute.py             # Central non-bypassable executor
+│   ├── txn.py                 # Transaction engine (begin/commit/abort)
+│   ├── ledger.py              # Forensic SHA-256 hash-chained log
+│   ├── rollback.py            # Deep-copy snapshot stack
+│   ├── watchdog.py            # Stall detection + auto-rollback
+│   ├── statehash.py           # Canonical state fingerprinting
+│   ├── integrity.py           # Code + config integrity hashing
+│   ├── policy_schema.py       # Startup config validation
+│   ├── invariants.py          # Formal state invariant rules
+│   ├── capabilities.py        # Cryptographic capability tokens
+│   ├── execution_graph.py     # Phase transition validator
+│   ├── escalation.py          # Failure taxonomy + safe mode
+│   ├── predictive.py          # Rolling risk score model
+│   └── replay.py              # Dry replay engine
+├── sparse/                    # Algorithmic Reflexes
+│   ├── anomaly.py             # EWMA with dynamic variance
+│   └── habits.py              # Beta posterior confidence bounds
+├── dense/                     # Statistical Reasoning
+│   ├── llm_iface.py           # Swappable LLM backend
+│   ├── planner.py             # Token-budgeted proposal generator
+│   └── patcher.py             # Plan → structured action dict
+├── memory/                    # State & Context
+│   ├── hot_cache.py           # Bounded FIFO context buffer
+│   ├── vector_store.py        # Deterministic BM25 retrieval
+│   ├── episodic_ledger.py     # Queryable (ctx, action, outcome) history
+│   ├── archive.py             # gzip cold snapshots
+│   └── router.py              # Unified memory router with txn staging
+├── tools/                     # Constrained Operations
+│   ├── system_ops.py          # Allowlisted tool registry (no shell)
+│   ├── metrics.py             # Prometheus live metric ingestion
+│   └── telemetry.py           # Structured JSONL metrics sink
+├── scheduler/                 # Tick-Based Scheduling
+│   ├── clocks.py              # Three-tier tick-based due tracker
+│   └── budgets.py             # Token + call rate limiter (tick refill)
+├── config/
+│   ├── policy.yaml            # Full policy schema with arg constraints
+│   └── budgets.yaml           # Rate limits, thresholds, determinism seed
+├── tests/
+│   └── replay_tests.py        # Ledger hash chain verification
+└── run.py                     # Hardened main runner
 ```
 
 ---
 
 ## 🛠️ Adding a New Tool
 
-Extending the agent's capabilities is straightforward and secure by default:
+1. Add an entry to `config/policy.yaml` with `allowed`, `max_risk`, `reversibility`, `args`
+2. Create a tool class in `tools/system_ops.py` with a `run(args)` method
+3. Register it in `TOOL_REGISTRY`
+4. Add the keyword to `ACTION_REGISTRY` in `dense/patcher.py`
 
-1. Add an entry to `config/policy.yaml` with `max_risk` and `requires_approval`.
-2. Add the tool keyword to `ACTION_REGISTRY` in `dense/patcher.py`.
-3. Implement the tool function logic in `tools/`.
-4. Dispatch it in the `execute()` function in `run.py`.
-
-The Kernel Gate automatically enforces the new policy rule—no other safety changes required.
+The gate automatically enforces the new policy. The executor automatically wraps it in transactions and logs it forensically.

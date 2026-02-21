@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+ledger.jsonl
+metrics.jsonl
+agent/archive/
+.DS_Store

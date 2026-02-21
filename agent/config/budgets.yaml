@@ -4,3 +4,25 @@ tick_s: 0.5
 anomaly_interval_s: 5.0
 plan_interval_s: 15.0
 rollback_window: 10
+
+# Per-action resource ceilings
+max_wall_time_per_action: 30
+max_subprocess_timeout: 120
+
+# Determinism
+seed: 1337
+
+# Escalation thresholds
+policy_violation_threshold: 3
+invariant_violation_threshold: 1
+tool_failure_threshold: 5
+ci_failure_threshold: 3
+
+# Predictive risk
+risk_window: 100
+risk_threshold: 0.7
+
+# Habit confidence
+habit_min_trials: 5
+habit_min_confidence: 0.6
+habit_decay_hours: 24
