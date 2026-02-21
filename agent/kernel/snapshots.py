@@ -85,7 +85,7 @@ class SnapshotManager:
         path = self.dir / f"snap_{tick}.json"
         if not path.exists():
             return None
-        with open(path, "r") as f:
+        with open(path) as f:
             return json.load(f)
 
     def list_snapshots(self):

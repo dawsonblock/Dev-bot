@@ -1,10 +1,10 @@
-# Dev-bot: Deterministic Autonomous DevOps Agent
+# Dev-bot: Distributed Deterministic Autonomous DevOps Agent
 
 [![CI](https://github.com/dawsonblock/Dev-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/dawsonblock/Dev-bot/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-A **bounded, auditable, self-improving autonomous agent** for continuous system maintenance. The LLM is in the passenger seat — the deterministic kernel drives.
+A **bounded, auditable, self-improving autonomous agent** for continuous system maintenance. The LLM is in the passenger seat — the deterministic kernel, now fortified with **Raft-based Distributed Consensus**, drives the system.
 
 ---
 
@@ -12,86 +12,77 @@ A **bounded, auditable, self-improving autonomous agent** for continuous system 
 
 | Property | Implementation |
 |---|---|
-| **Non-bypassable Gate** | Every action passes through `kernel/gate.py` with argument regex, rate limits, and reversibility checks |
-| **Central Executor** | All tool dispatch flows through `kernel/execute.py` — no direct tool calls anywhere |
-| **Cryptographic Ledger** | SHA-256 hash-chained, tamper-evident, forensic-grade with full I/O capture |
-| **Transactional Rollback** | `kernel/txn.py` provides begin/commit/abort with state snapshot restore |
-| **Deterministic Replay** | Tick-driven clock, global seed, deterministic retrieval — replay reproduces decisions |
-| **Formal Invariants** | State invariants validated before every transaction commit |
-| **Confidence-bounded Learning** | Beta posterior habits with Wilson score — reflexes fire only with statistical evidence |
-| **Predictive Failure Model** | Rolling window risk scoring triggers pre-emptive safe mode |
-| **Escalation Ladder** | Failure taxonomy with deterministic mode transitions |
+| **Distributed Consensus (Raft)** | `kernel/consensus.py` coordinates multi-node leader election and log replication (`append_entries`, `request_vote`) over true HTTP RPC. |
+| **Multiprocessing Cluster** | `demo_cluster.py` simulates a real distributed environment using OS-level process isolation and cross-process TCP networking. |
+| **Non-bypassable Gate** | Every action passes through `kernel/gate.py` with argument regex, rate limits, and reversibility checks. |
+| **Central Executor** | All tool dispatch flows through `kernel/execute.py` — no direct LLM tool calls anywhere. |
+| **Cryptographic Ledger** | SHA-256 hash-chained, tamper-evident, forensic-grade ledger log with full I/O capture. |
+| **Transactional Rollback** | `kernel/txn.py` provides begin/commit/abort with deep state snapshot restores. |
+| **Deterministic Replay** | Tick-driven clock, global seed, deterministic BM25 retrieval — replay perfectly reproduces decisions. |
+| **Formal Invariants** | State invariants validated before every transaction commit. |
+| **Predictive Failure Model** | Rolling window risk scoring triggers pre-emptive safe mode & escalation. |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture Stack
+
+### The Distributed Agent Topology
+
+Dev-bot operates as a decentralized network of autonomous nodes. Any active node can be elected leader and coordinate platform maintenance.
 
 ```mermaid
 graph TD
-    subgraph Kernel [Security & Audit]
+    subgraph Cluster OS [TCP Localhost Network]
+        NodeAlpha[Node Alpha :7001]
+        NodeBeta[Node Beta :7002]
+        NodeGamma[Node Gamma :7003]
+        
+        NodeAlpha <-->|HTTP RPC append_entries| NodeBeta
+        NodeAlpha <-->|HTTP RPC request_vote| NodeGamma
+        NodeBeta <-->|Heartbeats| NodeGamma
+    end
+
+    subgraph Internal Agent OS [Inside a Single Node]
         DET[Determinism Core] --> EL[Tick-Driven Event Loop]
-        G[Hardened Gate] --> EX[Central Executor]
+        C[Consensus Engine] --> EX[Central Executor]
+        G[Hardened Gate] --> EX
         EX --> TXN[Transaction Engine]
         TXN --> L[Forensic Ledger]
         L --> R[Rollback Engine]
-        INV[Invariants] --> EX
-        ESC[Escalation] --> EX
-        PRED[Predictive Model] --> ESC
     end
-
-    subgraph Memory [State & Context]
-        MR[Memory Router]
-        MR --> HC[Hot Cache]
-        MR --> VS[Vector Store]
-        MR --> EP[Episodic Ledger]
-    end
-
-    subgraph Sparse [Algorithmic Reflexes]
-        A[EWMA Anomaly Detection]
-        H[Bayesian Habits Table]
-    end
-
-    subgraph Dense [Statistical Reasoning]
-        LLM[LLM Interface]
-        P[Token-Budgeted Planner]
-        Pt[JSON Patcher]
-    end
-
-    subgraph Tools [Constrained Operations]
-        SO[System Ops Registry]
-        TEL[Telemetry Sink]
-    end
-
-    Metrics((Metrics)) --> A
-    A -- "Anomaly" --> H
-    H -- "No Reflex" --> P
-    P --> LLM --> Pt --> G
-    H -- "Confident Reflex" --> G
-    EX --> SO
-    EX --> TEL
-    TXN --> MR
+    
+    NodeAlpha -.-> Internal
 ```
 
-### Timescales
+### Cognitive Timescales
 
 | Tier | Interval | Work |
 |---|---|---|
-| **Fast** | Every tick | Metric ingest, EWMA update, hot cache write |
-| **Medium** | 10 ticks | Anomaly scoring, Bayesian habit lookup |
-| **Slow** | 30 ticks | LLM planning (or reflex bypass), gated execution |
+| **Micro (Network)** | `< 500ms` | Raft RPCs (`/heartbeat`, `/request_vote`, `/append_entries`), consensus jitter |
+| **Fast (Reflex)** | Every tick | Metric ingest, EWMA anomaly update, hot cache write |
+| **Medium (Habit)** | 10 ticks | Anomaly scoring, Bayesian habit lookup |
+| **Slow (Thought)**| 30 ticks | LLM planning (if reflexes bypassed), gated slow-execution |
 
 ---
 
-## 🔒 Security Model
+## 🔒 Security & Verification Model
 
-- **No freeform shell** — `tools/shell.py` replaced with `tools/system_ops.py` (allowlisted commands only)
-- **Argument validation** — regex-enforced per tool in `policy.yaml`
-- **Rate limiting** — per-tool rate ceilings enforced by the gate
-- **Reversibility classification** — `reversible`, `compensatable`, `irreversible`
-- **Repeat-failure guard** — consecutive failures block tool re-execution
-- **Code integrity** — `kernel/integrity.py` fingerprints codebase at boot
-- **Policy validation** — `kernel/policy_schema.py` rejects malformed configs at startup
-- **Capability tokens** — `kernel/capabilities.py` provides cryptographic scoped permissions
+Dev-bot employs a fundamentally defensive stance against both internal LLM hallucinations and external environmental anomalies.
+
+- **Consensus-Gated Ledger** — Application state (`DistributedLedger`) requires multi-node quorum approval before mutation.
+- **HMAC Signatures** — Every ledger entry (`verified_record.py`) is signed with a cryptographic secret; tampered logs fail boot verification.
+- **No Freeform Shell** — `tools/shell.py` has been deprecated in favor of `tools/system_ops.py` (allowlisted exact-match commands).
+- **Execution Containment** — Execution is firewalled through the strictly typed `gate.py`.
+- **Code Integrity** — `kernel/integrity.py` hashes the codebase at boot to prevent self-modification drift.
+
+---
+
+## 📊 Observability & UI
+
+Dev-bot provides a rich, real-time observability suite separated entirely from the agent's core decision loop to prevent observer effects.
+
+- **SSE Dashboard (`tools/dashboard.py`)**: A purely HTTP-based Server-Sent Events backend broadcasting live agent state.
+- **Vite Web UI (`ui/index.html`)**: A decoupled, reactive frontend displaying live Raft terms, commit indices, anomaly graphs, and gate rejections.
 
 ---
 
@@ -101,86 +92,53 @@ graph TD
 # Install dependencies
 pip install -r requirements.txt
 
-# Run with stub LLM (no API key needed)
+# Start the Web UI (Frontend)
+cd ui
+npm install
+npm run dev
+
+# In a new terminal, run the distributed cluster (Backend)
 cd agent
-python run.py
-
-# Run with real Claude API
-ANTHROPIC_API_KEY=sk-... python run.py --llm api
-
-# Run with local Ollama
-python run.py --llm ollama
-
-# Verify ledger integrity
-python -c "from kernel.ledger import Ledger; ok,n = Ledger.verify('ledger.jsonl'); print('PASS' if ok else 'FAIL')"
+python demo_cluster.py
 ```
 
-### Environment Variables
+### Environment Config (`.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server for live metrics |
-| `ANTHROPIC_API_KEY` | — | Claude API key (if `--llm api`) |
+| `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server for live hardware metrics |
+| `ANTHROPIC_API_KEY` | *(Required for full LLM)* | Claude API key |
+| `NETWORK_RPC_TIMEOUT` | `0.5` | Timeout for Raft HTTP peer polling |
 
 ---
 
-## 📁 Module Map
+## 📁 Repository Structure
 
 ```
-agent/
-├── kernel/                    # Security & Audit Core
-│   ├── determinism.py         # Global seed, tick clock, config hash
-│   ├── event_loop.py          # Tick-driven main loop
-│   ├── gate.py                # Hardened policy gate with arg validation
-│   ├── execute.py             # Central non-bypassable executor
-│   ├── txn.py                 # Transaction engine (begin/commit/abort)
-│   ├── ledger.py              # Forensic SHA-256 hash-chained log
-│   ├── rollback.py            # Deep-copy snapshot stack
-│   ├── watchdog.py            # Stall detection + auto-rollback
-│   ├── statehash.py           # Canonical state fingerprinting
-│   ├── integrity.py           # Code + config integrity hashing
-│   ├── policy_schema.py       # Startup config validation
-│   ├── invariants.py          # Formal state invariant rules
-│   ├── capabilities.py        # Cryptographic capability tokens
-│   ├── execution_graph.py     # Phase transition validator
-│   ├── escalation.py          # Failure taxonomy + safe mode
-│   ├── predictive.py          # Rolling risk score model
-│   └── replay.py              # Dry replay engine
-├── sparse/                    # Algorithmic Reflexes
-│   ├── anomaly.py             # EWMA with dynamic variance
-│   └── habits.py              # Beta posterior confidence bounds
-├── dense/                     # Statistical Reasoning
-│   ├── llm_iface.py           # Swappable LLM backend
-│   ├── planner.py             # Token-budgeted proposal generator
-│   └── patcher.py             # Plan → structured action dict
-├── memory/                    # State & Context
-│   ├── hot_cache.py           # Bounded FIFO context buffer
-│   ├── vector_store.py        # Deterministic BM25 retrieval
-│   ├── episodic_ledger.py     # Queryable (ctx, action, outcome) history
-│   ├── archive.py             # gzip cold snapshots
-│   └── router.py              # Unified memory router with txn staging
-├── tools/                     # Constrained Operations
-│   ├── system_ops.py          # Allowlisted tool registry (no shell)
-│   ├── metrics.py             # Prometheus live metric ingestion
-│   └── telemetry.py           # Structured JSONL metrics sink
-├── scheduler/                 # Tick-Based Scheduling
-│   ├── clocks.py              # Three-tier tick-based due tracker
-│   └── budgets.py             # Token + call rate limiter (tick refill)
-├── config/
-│   ├── policy.yaml            # Full policy schema with arg constraints
-│   └── budgets.yaml           # Rate limits, thresholds, determinism seed
-├── tests/
-│   └── replay_tests.py        # Ledger hash chain verification
-└── run.py                     # Hardened main runner
+Dev-bot/
+├── agent/
+│   ├── kernel/                    # System Call & Distributed Core
+│   │   ├── consensus.py           # Raft leader election & log sync
+│   │   ├── network_rpc.py         # HTTP Server/Client for Inter-node RPC
+│   │   ├── distributed_ledger.py  # Quorum-gated state storage
+│   │   ├── gate.py                # Hardened policy gate
+│   │   ├── verified_record.py     # HMAC payload signatures
+│   │   ├── txn.py                 # Acid-compliant state rollbacks
+│   │   └── replay.py              # Cryptographic log replayer
+│   ├── dense/                     # Statistical Reasoning (LLM)
+│   │   └── llm_iface.py           # Swappable OpenAI/Anthropic/Ollama backend
+│   ├── sparse/                    # Fast Algorithmic Reflexes
+│   │   ├── anomaly.py             # EWMA with dynamic variance
+│   │   └── habits.py              # Bayesian posterior confidence tables
+│   ├── memory/                    # Context Vector Databases
+│   │   └── vector_store.py        # Deterministic BM25 retrieval
+│   ├── tools/                     # Constrained Operands
+│   │   └── dashboard.py           # Real-time SSE telemetry exporter
+│   ├── demo_cluster.py            # Multiprocessing 3-node runner
+│   └── tests/                     # Validation Suite
+│       └── test_full_loop.py      # E2E multi-node ledger + consensus test
+├── ui/                            # Observability Frontend
+│   └── index.html                 # Modern SSE Consumer Dashboard
+└── config/
+    └── policy.yaml                # Hardcoded Gate Rule Allowlist
 ```
-
----
-
-## 🛠️ Adding a New Tool
-
-1. Add an entry to `config/policy.yaml` with `allowed`, `max_risk`, `reversibility`, `args`
-2. Create a tool class in `tools/system_ops.py` with a `run(args)` method
-3. Register it in `TOOL_REGISTRY`
-4. Add the keyword to `ACTION_REGISTRY` in `dense/patcher.py`
-
-The gate automatically enforces the new policy. The executor automatically wraps it in transactions and logs it forensically.

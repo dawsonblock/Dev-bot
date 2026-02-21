@@ -43,7 +43,7 @@ class Pruner:
 
         # 2. Read all records
         records = []
-        with open(self.ledger_path, "r") as f:
+        with open(self.ledger_path) as f:
             for line in f:
                 if line.strip():
                     records.append(line)

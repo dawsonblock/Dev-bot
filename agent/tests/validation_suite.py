@@ -21,6 +21,7 @@ from kernel.evolution_bounds import EvolutionBounds
 from kernel.escalation import Escalation
 from kernel.ledger import Ledger
 from kernel.verifier import verify_ledger
+import contextlib
 
 
 PASS = 0
@@ -161,10 +162,8 @@ def test_reconstruction():
 def test_ledger_verification():
     """Create a small ledger and verify it."""
     test_path = "/tmp/test_validation_ledger.jsonl"
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.remove(test_path)
-    except FileNotFoundError:
-        pass
 
     ledger = Ledger(test_path)
     ledger.write_genesis(seed=42, config_hash="abc", code_hash="def")

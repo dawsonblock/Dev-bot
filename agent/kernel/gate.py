@@ -13,6 +13,34 @@ class Gate:
         self.policy = policy
         self._rate_tracker = {}  # tool -> [timestamps]
 
+    def _verify_args(self, args, cfg):
+        arg_rules = cfg.get("args", {})
+        for arg_name, rule in arg_rules.items():
+            val = args.get(arg_name, "")
+            if "required" in rule and rule["required"] and not val:
+                return False, f"arg_missing_{arg_name}", "GATE-005"
+            if val and "regex" in rule and not re.match(rule["regex"], str(val)):
+                return (
+                    False,
+                    f"arg_invalid_{arg_name} (pattern={rule['regex']})",
+                    "GATE-006",
+                )
+        return True, "ok", "ok"
+
+    def _verify_rate_limit(self, tool, cfg):
+        max_rate = cfg.get("max_rate")
+        if not max_rate:
+            return True, "ok", "ok"
+        now = time.time()
+        history = self._rate_tracker.get(tool, [])
+        # Keep only last 60 seconds
+        history = [t for t in history if now - t < 60.0]
+        if len(history) >= max_rate:
+            return False, f"rate_exceeded (max={max_rate}/min)", "GATE-007"
+        history.append(now)
+        self._rate_tracker[tool] = history
+        return True, "ok", "ok"
+
     def check(self, action):
         """Check an action against the full policy.
 
@@ -42,30 +70,14 @@ class Gate:
             return False, "needs_approval", "GATE-004"
 
         # 4. Argument validation via regex
-        arg_rules = cfg.get("args", {})
-        for arg_name, rule in arg_rules.items():
-            val = args.get(arg_name, "")
-            if "required" in rule and rule["required"] and not val:
-                return False, f"arg_missing_{arg_name}", "GATE-005"
-            if val and "regex" in rule:
-                if not re.match(rule["regex"], str(val)):
-                    return (
-                        False,
-                        f"arg_invalid_{arg_name} (pattern={rule['regex']})",
-                        "GATE-006",
-                    )
+        ok, reason, code = self._verify_args(args, cfg)
+        if not ok:
+            return False, reason, code
 
         # 5. Rate limiting
-        max_rate = cfg.get("max_rate")
-        if max_rate:
-            now = time.time()
-            history = self._rate_tracker.get(tool, [])
-            # Keep only last 60 seconds
-            history = [t for t in history if now - t < 60.0]
-            if len(history) >= max_rate:
-                return False, f"rate_exceeded (max={max_rate}/min)", "GATE-007"
-            history.append(now)
-            self._rate_tracker[tool] = history
+        ok, reason, code = self._verify_rate_limit(tool, cfg)
+        if not ok:
+            return False, reason, code
 
         # 6. Reversibility warning (logged, not blocking by itself)
         reversibility = cfg.get("reversibility", "reversible")

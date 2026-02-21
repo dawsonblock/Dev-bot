@@ -47,20 +47,19 @@ def run_node(node_id, port, peers):
         ce.heartbeat()
 
         # The elected leader proposes actions
-        if ce.is_leader:
-            if random.random() > 0.3:
-                action = {
-                    "tool": random.choice(["scan", "patch", "analyze", "test"]),
-                    "target": f"file_{tick}.py",
-                }
-                committed, entry = dl.propose_and_append(action, tick)
+        if ce.is_leader and random.random() > 0.3:
+            action = {
+                "tool": random.choice(["scan", "patch", "analyze", "test"]),
+                "target": f"file_{tick}.py",
+            }
+            committed, entry = dl.propose_and_append(action, tick)
 
-                status = "COMMITTED" if committed else "FAILED"
-                print(
-                    f"[{node_id}] tick={tick} term={ce.current_term} "
-                    f"action={action['tool']} status={status} "
-                    f"ledger_height={dl.height()}"
-                )
+            status = "COMMITTED" if committed else "FAILED"
+            print(
+                f"[{node_id}] tick={tick} term={ce.current_term} "
+                f"action={action['tool']} status={status} "
+                f"ledger_height={dl.height()}"
+            )
 
         tick += 1
 

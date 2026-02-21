@@ -50,8 +50,6 @@ class Transaction:
                 self.memory.abort()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            self.abort()
-        elif self._active and not self._committed:
+        if exc_type is not None or self._active and not self._committed:
             self.abort()
         return False

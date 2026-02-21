@@ -53,7 +53,7 @@ def verify_ledger(path, check_signatures=True, device_key=None):
     prev_hash = "0" * 64
 
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             for i, line in enumerate(f):
                 line = line.strip()
                 if not line:
@@ -95,16 +95,18 @@ def verify_ledger(path, check_signatures=True, device_key=None):
                         )
 
                 # ── 3. Invariant flags ────────────────
-                if rec.get("type") == "verified_exec":
-                    if rec.get("invariant_ok") is False:
-                        report.invariants_ok = False
-                        report.errors.append(
-                            {
-                                "index": i,
-                                "type": "invariant_violation_committed",
-                                "tick": rec.get("tick"),
-                            }
-                        )
+                if (
+                    rec.get("type") == "verified_exec"
+                    and rec.get("invariant_ok") is False
+                ):
+                    report.invariants_ok = False
+                    report.errors.append(
+                        {
+                            "index": i,
+                            "type": "invariant_violation_committed",
+                            "tick": rec.get("tick"),
+                        }
+                    )
 
     except FileNotFoundError:
         pass  # empty ledger is valid

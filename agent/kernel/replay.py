@@ -21,7 +21,7 @@ class ReplayEngine:
     def load(self):
         """Load all ledger records."""
         self.records = []
-        with open(self.path, "r") as f:
+        with open(self.path) as f:
             for line in f:
                 line = line.strip()
                 if line:

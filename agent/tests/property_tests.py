@@ -21,6 +21,7 @@ from kernel.ledger import Ledger
 from kernel.contracts import requires, ensures, ContractViolation
 from kernel.symbolic import SymbolicChecker
 from kernel.statehash import state_hash
+import contextlib
 
 PASS = 0
 FAIL = 1
@@ -87,10 +88,8 @@ def test_bounds_fuzz():
 def test_ledger_stress():
     """Write many records and verify chain integrity."""
     path = "/tmp/test_property_ledger.jsonl"
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.remove(path)
-    except FileNotFoundError:
-        pass
 
     ledger = Ledger(path)
     ledger.write_genesis(seed=42, config_hash="test", code_hash="test")

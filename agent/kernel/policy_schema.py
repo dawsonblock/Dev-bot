@@ -17,6 +17,32 @@ class PolicyValidationError(Exception):
     pass
 
 
+def _validate_tool(tool_name, cfg):
+    if not isinstance(cfg, dict):
+        raise PolicyValidationError(f"Tool '{tool_name}': config must be a dict")
+
+    if "allowed" not in cfg:
+        raise PolicyValidationError(
+            f"Tool '{tool_name}': missing required field 'allowed'"
+        )
+
+    rev = cfg.get("reversibility")
+    if rev and rev not in VALID_REVERSIBILITY:
+        raise PolicyValidationError(
+            f"Tool '{tool_name}': invalid reversibility '{rev}'"
+        )
+
+    args = cfg.get("args")
+    if args:
+        if not isinstance(args, dict):
+            raise PolicyValidationError(f"Tool '{tool_name}': 'args' must be a dict")
+        for arg_name, rule in args.items():
+            if not isinstance(rule, dict):
+                raise PolicyValidationError(
+                    f"Tool '{tool_name}' arg '{arg_name}': rule must be a dict"
+                )
+
+
 def validate_policy(policy):
     """Validate the full policy dict. Raises PolicyValidationError on failure."""
     if not isinstance(policy, dict):
@@ -27,31 +53,7 @@ def validate_policy(policy):
         raise PolicyValidationError("Policy must contain a 'tools' dict")
 
     for tool_name, cfg in tools.items():
-        if not isinstance(cfg, dict):
-            raise PolicyValidationError(f"Tool '{tool_name}': config must be a dict")
-
-        if "allowed" not in cfg:
-            raise PolicyValidationError(
-                f"Tool '{tool_name}': missing required field 'allowed'"
-            )
-
-        rev = cfg.get("reversibility")
-        if rev and rev not in VALID_REVERSIBILITY:
-            raise PolicyValidationError(
-                f"Tool '{tool_name}': invalid reversibility '{rev}'"
-            )
-
-        args = cfg.get("args")
-        if args:
-            if not isinstance(args, dict):
-                raise PolicyValidationError(
-                    f"Tool '{tool_name}': 'args' must be a dict"
-                )
-            for arg_name, rule in args.items():
-                if not isinstance(rule, dict):
-                    raise PolicyValidationError(
-                        f"Tool '{tool_name}' arg '{arg_name}': rule must be a dict"
-                    )
+        _validate_tool(tool_name, cfg)
 
     return True
 

@@ -15,7 +15,7 @@ class Ledger:
         self.path = path
         self.prev = "0" * 64
         if os.path.exists(path) and os.path.getsize(path) > 0:
-            with open(path, "r") as f:
+            with open(path) as f:
                 lines = f.readlines()
                 if lines:
                     last = lines[-1].strip()
@@ -60,7 +60,7 @@ class Ledger:
             return True, 0
         prev = "0" * 64
         count = 0
-        with open(path, "r") as f:
+        with open(path) as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -79,7 +79,7 @@ class Ledger:
         records = []
         if not os.path.exists(path):
             return records
-        with open(path, "r") as f:
+        with open(path) as f:
             for line in f:
                 if line.strip():
                     records.append(json.loads(line))

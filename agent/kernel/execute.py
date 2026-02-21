@@ -32,27 +32,9 @@ class Executor:
         self.telemetry = telemetry
         self._recent_failures = []
 
-    def execute_checked(self, action, state, context=""):
-        """Execute an action through the full safety pipeline.
-
-        Returns:
-            dict with keys: status, ok, result, gate_rule, state_before, state_after
-        """
-        tick = get_tick()
-        t0 = time.time()
-        tool_name = action.get("tool", "noop")
-
-        # ── 1. Gate check ─────────────────────────────
+    def _check_preconditions(self, action, tool_name, tick):
         allowed, reason, rule_id = self.gate.check(action)
         if not allowed:
-            record = {
-                "status": "rejected",
-                "ok": False,
-                "reason": reason,
-                "gate_rule": rule_id,
-                "tick": tick,
-                "tool": tool_name,
-            }
             self.ledger.append(
                 {
                     "event": "gate_reject",
@@ -65,51 +47,59 @@ class Executor:
             if self.telemetry:
                 self.telemetry.emit(
                     "gate_reject",
-                    {
-                        "tool": tool_name,
-                        "reason": reason,
-                        "rule_id": rule_id,
-                    },
+                    {"tool": tool_name, "reason": reason, "rule_id": rule_id},
                 )
-            return record
+            return {
+                "status": "rejected",
+                "ok": False,
+                "reason": reason,
+                "gate_rule": rule_id,
+                "tick": tick,
+                "tool": tool_name,
+            }, rule_id
 
-        # ── 2. Budget check ───────────────────────────
         if not self.budgets.use_call():
-            record = {
+            self.ledger.append(
+                {"event": "budget_block", "tick": tick, "action": action}
+            )
+            if self.telemetry:
+                self.telemetry.emit("budget_block", {"tool": tool_name})
+            return {
                 "status": "budget_block",
                 "ok": False,
                 "reason": "budget_exhausted",
                 "tick": tick,
                 "tool": tool_name,
-            }
-            self.ledger.append(
-                {
-                    "event": "budget_block",
-                    "tick": tick,
-                    "action": action,
-                }
-            )
-            if self.telemetry:
-                self.telemetry.emit("budget_block", {"tool": tool_name})
-            return record
+            }, rule_id
 
-        # ── 3. Repeat-failure guard ───────────────────
         if self._is_repeat_failure(tool_name):
-            record = {
+            self.ledger.append(
+                {"event": "repeat_blocked", "tick": tick, "action": action}
+            )
+            return {
                 "status": "repeat_blocked",
                 "ok": False,
                 "reason": "repeated_failure_blocked",
                 "tick": tick,
                 "tool": tool_name,
-            }
-            self.ledger.append(
-                {
-                    "event": "repeat_blocked",
-                    "tick": tick,
-                    "action": action,
-                }
-            )
-            return record
+            }, rule_id
+
+        return None, rule_id
+
+    def execute_checked(self, action, state, context=""):
+        """Execute an action through the full safety pipeline.
+
+        Returns:
+            dict with keys: status, ok, result, gate_rule, state_before, state_after
+        """
+        tick = get_tick()
+        t0 = time.time()
+        tool_name = action.get("tool", "noop")
+
+        # ── 1-3. Precondition checks ────────────────────
+        blocked_record, rule_id = self._check_preconditions(action, tool_name, tick)
+        if blocked_record:
+            return blocked_record
 
         # ── 4. Resolve tool ───────────────────────────
         tool_cls = self.tools.get(tool_name)

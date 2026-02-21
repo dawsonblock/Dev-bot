@@ -194,7 +194,7 @@ def build_agent(
     return agent
 
 
-def make_step(agent):
+def make_step(agent):  # noqa: C901
     """Build the main tick step function using all hardened modules."""
     rollback = agent["rollback"]
     wd = agent["wd"]
@@ -214,7 +214,7 @@ def make_step(agent):
     snapshots = agent["snapshots"]
     adaptation = agent["adaptation"]
 
-    def step(tick):
+    def step(tick):  # noqa: C901
         wd.kick(tick)
 
         # ── Check safe mode ───────────────────────────
