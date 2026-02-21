@@ -1,0 +1,42 @@
+version: "3.9"
+
+services:
+  agent:
+    build: .
+    container_name: devbot-agent
+    ports:
+      - "8080:8080" # Health endpoints
+      - "8081:8081" # Dashboard
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - DEVBOT_DEVICE_KEY=change-this-in-production
+    volumes:
+      - agent-data:/app/agent/archive
+      - agent-data:/app/agent/snapshots
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: devbot-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: devbot-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  agent-data:
