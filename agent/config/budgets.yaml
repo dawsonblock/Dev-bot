@@ -1,0 +1,6 @@
+token_per_min: 8000
+tool_calls_per_min: 30
+tick_s: 0.5
+anomaly_interval_s: 5.0
+plan_interval_s: 15.0
+rollback_window: 10

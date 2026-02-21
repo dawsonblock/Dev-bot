@@ -1,0 +1,5 @@
+restart_service: {max_risk: 2, requires_approval: false}
+run_healthcheck: {max_risk: 0, requires_approval: false}
+shell: {max_risk: 1, requires_approval: true}
+git: {max_risk: 2, requires_approval: true}
+noop: {max_risk: 0, requires_approval: false}
