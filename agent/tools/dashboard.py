@@ -224,14 +224,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
-            self.wfile.write(DASHBOARD_HTML.encode())
 
         elif self.path == "/events":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
 
             try:
