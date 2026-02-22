@@ -44,16 +44,24 @@ class ConsensusEngine:
     commits are immediate. In multi-node mode, majority is required.
     """
 
-    def __init__(self, node_id, peers=None, election_timeout_ms=1500, rpc_client=None):
+    def __init__(
+        self, node_id, peers=None, election_timeout_ms=1500, rpc_client=None, wal=None
+    ):
         self.node_id = node_id
         self.peers = peers or {}  # dict mapping peer_id -> peer_addr
         self.state = ConsensusState.LEADER if not peers else ConsensusState.FOLLOWER
         self.rpc_client = rpc_client
+        self.wal = wal
 
         # Persistent state
-        self.current_term = 0
-        self.voted_for = None
-        self.log = []
+        if self.wal:
+            self.current_term = self.wal.term
+            self.voted_for = self.wal.voted_for
+            self.log = [LogEntry(**e) for e in self.wal.entries]
+        else:
+            self.current_term = 0
+            self.voted_for = None
+            self.log = []
 
         # Volatile state
         self.commit_index = -1
@@ -69,8 +77,15 @@ class ConsensusEngine:
 
         # If no peers, self-elect
         if not peers:
-            self.current_term = 1
+            # Only promote term to 1 if we're entirely fresh and disk isn't ahead
+            if self.current_term == 0:
+                self.current_term = 1
             self.voted_for = node_id
+            self._save_state()
+
+    def _save_state(self):
+        if self.wal:
+            self.wal.save(term=self.current_term, voted_for=self.voted_for)
 
     @property
     def is_leader(self):
@@ -100,6 +115,8 @@ class ConsensusEngine:
             proposer=self.node_id,
         )
         self.log.append(entry)
+        if self.wal:
+            self.wal.save(append_entries=[entry.to_dict()])
         index = len(self.log) - 1
 
         # Single-node: immediate commit
@@ -159,6 +176,7 @@ class ConsensusEngine:
             self.current_term = term
             self.state = ConsensusState.FOLLOWER
             self.voted_for = None
+            self._save_state()
 
         if self.voted_for is None or self.voted_for == candidate_id:
             # Check log completeness
@@ -169,6 +187,7 @@ class ConsensusEngine:
                 last_log_term == my_last_term and last_log_index >= my_last_index
             ):
                 self.voted_for = candidate_id
+                self._save_state()
                 self.last_heartbeat = time.time()
                 return self.current_term, True
 
@@ -181,9 +200,14 @@ class ConsensusEngine:
         if term < self.current_term:
             return self.current_term, False
 
+        state_changed = (self.current_term != term) or (self.voted_for is not None)
         self.current_term = term
         self.state = ConsensusState.FOLLOWER
         self.voted_for = None
+        self.last_heartbeat = time.time()
+
+        if state_changed:
+            self._save_state()
         self.last_heartbeat = time.time()
 
         # Log consistency check
@@ -195,14 +219,22 @@ class ConsensusEngine:
 
         # Append new entries
         append_idx = prev_log_index + 1
+        truncate_idx = None
+        new_entries = []
         for i, entry_dict in enumerate(entries):
             idx = append_idx + i
             if idx < len(self.log):
                 if self.log[idx].term != entry_dict["term"]:
                     self.log = self.log[:idx]
+                    truncate_idx = idx
                     self.log.append(LogEntry(**entry_dict))
+                    new_entries.append(entry_dict)
             else:
                 self.log.append(LogEntry(**entry_dict))
+                new_entries.append(entry_dict)
+
+        if self.wal and (truncate_idx is not None or new_entries):
+            self.wal.save(truncate_idx=truncate_idx, append_entries=new_entries)
 
         if leader_commit > self.commit_index:
             self.commit_index = min(leader_commit, len(self.log) - 1)
@@ -214,6 +246,7 @@ class ConsensusEngine:
         self.state = ConsensusState.CANDIDATE
         self.current_term += 1
         self.voted_for = self.node_id
+        self._save_state()
         votes = 1  # vote for self
 
         last_index = len(self.log) - 1

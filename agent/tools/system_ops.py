@@ -7,6 +7,41 @@ No arbitrary shell execution.
 import subprocess
 import shlex
 
+sandbox_instance = None
+
+
+def set_sandbox(sb):
+    global sandbox_instance
+    sandbox_instance = sb
+
+
+def _run_cmd(cmd_list, timeout=10, limit=500):
+    if sandbox_instance:
+        res = sandbox_instance.execute(cmd_list, timeout=timeout)
+        success = res["rc"] == 0
+        return {
+            "ok": success,
+            "rc": res["rc"],
+            "stdout": res["out"][:limit],
+            "stderr": res["err"][:limit],
+        }
+    else:
+        try:
+            p = subprocess.run(
+                cmd_list,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return {
+                "ok": p.returncode == 0,
+                "rc": p.returncode,
+                "stdout": p.stdout[:limit],
+                "stderr": p.stderr[:limit],
+            }
+        except Exception as e:
+            return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e)}
+
 
 class RestartService:
     name = "restart_service"
@@ -23,18 +58,7 @@ class RestartService:
                 "stderr": "",
             }
         try:
-            p = subprocess.run(
-                ["systemctl", "restart", svc],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            return {
-                "ok": p.returncode == 0,
-                "rc": p.returncode,
-                "stdout": p.stdout[:500],
-                "stderr": p.stderr[:500],
-            }
+            return _run_cmd(["systemctl", "restart", svc], timeout=30, limit=500)
         except Exception as e:
             return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e)}
 
@@ -46,18 +70,8 @@ class HealthCheck:
     def run(args):
         url = args.get("url", "http://localhost/")
         try:
-            p = subprocess.run(
-                ["curl", "-s", "-f", "-o", "/dev/null", "-w", "%{http_code}", url],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return {
-                "ok": p.returncode == 0,
-                "rc": p.returncode,
-                "stdout": p.stdout[:500],
-                "stderr": p.stderr[:500],
-            }
+            cmd = ["curl", "-s", "-f", "-o", "/dev/null", "-w", "%{http_code}", url]
+            return _run_cmd(cmd, timeout=10, limit=500)
         except Exception as e:
             return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e)}
 
@@ -78,18 +92,8 @@ class GetLogs:
                 "stderr": "",
             }
         try:
-            p = subprocess.run(
-                ["journalctl", "-u", svc, "-n", str(lines), "--no-pager"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return {
-                "ok": p.returncode == 0,
-                "rc": p.returncode,
-                "stdout": p.stdout[:2000],
-                "stderr": p.stderr[:500],
-            }
+            cmd = ["journalctl", "-u", svc, "-n", str(lines), "--no-pager"]
+            return _run_cmd(cmd, timeout=10, limit=2000)
         except Exception as e:
             return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e)}
 
@@ -111,18 +115,7 @@ class RunCI:
                 "stderr": "",
             }
         try:
-            p = subprocess.run(
-                shlex.split(cmd),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            return {
-                "ok": p.returncode == 0,
-                "rc": p.returncode,
-                "stdout": p.stdout[:2000],
-                "stderr": p.stderr[:500],
-            }
+            return _run_cmd(shlex.split(cmd), timeout=120, limit=2000)
         except Exception as e:
             return {"ok": False, "rc": -1, "stdout": "", "stderr": str(e)}
 

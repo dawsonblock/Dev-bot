@@ -51,6 +51,10 @@ from tools.telemetry import Telemetry
 from scheduler.clocks import Clocks
 from scheduler.budgets import Budgets
 
+from kernel.sandbox import DockerSandbox
+from tools.shell import set_sandbox as shell_set_sandbox
+from tools.system_ops import set_sandbox as ops_set_sandbox
+
 # ── Config ────────────────────────────────────────────
 CONFIG_DIR = Path(__file__).parent / "config"
 policy_cfg = yaml.safe_load((CONFIG_DIR / "policy.yaml").read_text())
@@ -163,6 +167,19 @@ def build_agent(
     # ── 9. Genesis record ─────────────────────────────
     ledger.write_genesis(seed, cfg_hash, code_hash)
 
+    # ── 10. Sandbox ───────────────────────────────────
+    sandbox = DockerSandbox()
+    try:
+        sandbox.start()
+        shell_set_sandbox(sandbox)
+        ops_set_sandbox(sandbox)
+        print("[SANDBOX] Docker isolation active.")
+    except Exception as e:
+        print(
+            f"[WARN] Failed to start Docker sandbox, falling back to host execution: {e}"
+        )
+        sandbox = None
+
     agent = {
         "state": state,
         "gate": gate,
@@ -190,6 +207,7 @@ def build_agent(
         ),
         "snapshots": SnapshotManager(snapshot_dir="snapshots", interval_ticks=500),
         "adaptation": AdaptationEngine(),
+        "sandbox": sandbox,
     }
     return agent
 
@@ -399,6 +417,8 @@ def main():
         loop.run()
     except KeyboardInterrupt:
         print("\n[Agent] shutting down, archiving state...")
+        if agent.get("sandbox"):
+            agent["sandbox"].stop()
         Path("archive").mkdir(exist_ok=True)
         agent["arc"].dump(agent["state"], label="shutdown")
 
